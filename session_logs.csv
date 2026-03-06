@@ -1,0 +1,7 @@
+Timestamp,Session_ID,Risk_Level,Decision
+2026-02-11T03:13:39.417105,3f5c8256-9eda-4795-877a-7f9f5eaf907e,Low,Accepted
+2026-02-11T03:18:43.024014,eb9ea4d2-bd40-454e-bdd7-bccb57199fe6,High,Rejected
+2026-02-11T03:18:53.970942,eb9ea4d2-bd40-454e-bdd7-bccb57199fe6,High,Rejected
+2026-02-11T03:19:08.705810,eb9ea4d2-bd40-454e-bdd7-bccb57199fe6,High,Rejected
+2026-02-11T03:19:18.766142,eb9ea4d2-bd40-454e-bdd7-bccb57199fe6,High,Rejected
+2026-02-14T03:00:18.452887,b26c8389-ec4d-483c-8dcb-26400671a845,High,Rejected
