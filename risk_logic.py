@@ -57,7 +57,7 @@ class RiskAssessor:
     """
     
     # --- Configuration Constants (The Rules) ---
-    MAX_RISK_PERCENT = 0.02      # Rule 1: Max 2% risk of total capital
+    MAX_RISK_PERCENT = 1.00      # Rule 1: Max 100% risk of total capital (1:1 Ratio)
     MAX_DRAWDOWN_PERCENT = 0.05  # Rule 2: Max 5% drawdown (for this trade's impact)
     MIN_RISK_REWARD = 1.5        # Rule 3: Must earn at least $1.50 for every $1 risked
     MAX_LEVERAGE = 20.0          # Rule 4: Max 20x leverage
