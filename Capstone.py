@@ -4,15 +4,17 @@ import datetime
 import os
 import pandas as pd
 import plotly.graph_objects as go
+from supabase import create_client
 from risk_logic import TradeInput, RiskAssessor, AssessmentResult
 
-# --- OPTION A: Global In-Memory Log (Shared across all users) ---
-# To switch to Option B, simply delete this function and use a database call instead.
+# --- OPTION B: Supabase Cloud Database (Permanent Storage) ---
 @st.cache_resource
-def get_global_logs():
-    return []
+def init_supabase():
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
+    return create_client(url, key)
 
-global_logs = get_global_logs()
+supabase = init_supabase()
 
 # ==========================================
 # PART 3: The User Interface (The "Face")
@@ -53,7 +55,7 @@ with tab_eval:
     
     with col2:
         take_profit = st.number_input("Take Profit Price", min_value=0.01, value=105.0)
-        position_size = st.number_input("Position Size (Units)", min_value=0.01, value=1.0)
+        position_size = st.number_input("Position Size ($)", min_value=0.01, value=100.0, step=10.0)
     
     # --- Dynamic Pre-calculations ---
     st.markdown("---")
@@ -67,13 +69,15 @@ with tab_eval:
         risk_per_unit = stop_loss - entry_price
         reward_per_unit = entry_price - take_profit
     
-    total_risk = risk_per_unit * position_size
-    risk_pct = (total_risk / capital) * 100 if capital > 0 else 0
+    # Effective Exposure = (Position Size * Leverage) / Capital
+    # Higher leverage = higher exposure = more danger
+    effective_exposure = (position_size * leverage) / capital if capital > 0 else 0
     rr_ratio = reward_per_unit / risk_per_unit if risk_per_unit > 0 else 0
     
     metric_col1, metric_col2 = st.columns(2)
     with metric_col1:
-        st.metric("Live Risk %", f"{risk_pct:.2f}%")
+        exposure_label = f"{effective_exposure:.2f}x"
+        st.metric("Exposure Ratio", exposure_label, delta="Safe" if effective_exposure < 1.0 else "⚠️ Over 1:1!", delta_color="normal" if effective_exposure < 1.0 else "inverse")
     with metric_col2:
         st.metric("Risk:Reward Ratio", f"1 : {rr_ratio:.2f}")
 
@@ -174,44 +178,48 @@ with tab_eval:
             st.plotly_chart(fig, use_container_width=True)
 
         # E. Privacy-Preserving Logging
-        # --- OPTION A: Appending to Global In-Memory List ---
-        # Note: Replace this section with Option B (Database Insert) later
-        log_entry = {
-            "Timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "Session_ID": st.session_state['session_id'][:8] + "-****-****",
-            "Risk_Level": result.risk_level,
-            "Decision": 'Accepted' if result.is_safe else 'Rejected'
-        }
-        
-        global_logs.insert(0, log_entry) # Put newest at the top
-        # Keep only the last 100 to prevent memory leaks
-        if len(global_logs) > 100:
-            global_logs.pop()
-        # ----------------------------------------------------
-            
-        st.caption(f"🔒 Analysis queued in live memory (Session: {st.session_state['session_id'][:8]}...)")
+        # --- OPTION B: Supabase Cloud Database Insert ---
+        try:
+            supabase.table("session_logs").insert({
+                "session_id": st.session_state['session_id'][:8] + "-****-****",
+                "risk_level": result.risk_level,
+                "decision": 'Accepted' if result.is_safe else 'Rejected'
+            }).execute()
+            st.caption(f"🔒 Analysis logged permanently (Session: {st.session_state['session_id'][:8]}...)")
+        except Exception as e:
+            st.caption(f"⚠️ Log failed to save: {e}")
 
 with tab_history:
-    st.subheader("📚 Live Session History (Orderbook Style)")
-    st.markdown("100% anonymized live tape. This data runs in-memory and will clear when the Streamlit server restarts.")
+    st.subheader("📚 Permanent Session History")
+    st.markdown("100% anonymized logs stored permanently in a cloud database. Data persists across server restarts.")
     
-    # --- OPTION A: In-Memory Display ---
-    # Note: Replace this block with Option B (Database Fetch) later
-    if len(global_logs) > 0:
-        df = pd.DataFrame(global_logs)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    # --- OPTION B: Supabase Cloud Database Fetch ---
+    try:
+        response = supabase.table("session_logs").select("created_at, session_id, risk_level, decision").order("created_at", desc=True).limit(100).execute()
         
-        # System Analytics
-        st.markdown("### 📊 Live Analytics")
-        stat_col1, stat_col2 = st.columns(2)
-        with stat_col1:
-            st.metric("Live Evaluations", len(df))
-        with stat_col2:
-            accepted_count = len(df[df['Decision'] == 'Accepted'])
-            accepted_rate = (accepted_count / len(df)) * 100 if len(df) > 0 else 0
-            st.metric("Live Acceptance Rate", f"{accepted_rate:.1f}%")
-    else:
-        st.info("No active sessions in memory right now. Run a check to start the tape!")
+        if response.data and len(response.data) > 0:
+            df = pd.DataFrame(response.data)
+            
+            # Format timestamp for display
+            if 'created_at' in df.columns:
+                df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                df = df.rename(columns={'created_at': 'Timestamp', 'session_id': 'Session_ID', 'risk_level': 'Risk_Level', 'decision': 'Decision'})
+            
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            # System Analytics
+            st.markdown("### 📊 Global Analytics")
+            stat_col1, stat_col2 = st.columns(2)
+            with stat_col1:
+                st.metric("Total Evaluations", len(df))
+            with stat_col2:
+                accepted_count = len(df[df['Decision'] == 'Accepted'])
+                accepted_rate = (accepted_count / len(df)) * 100 if len(df) > 0 else 0
+                st.metric("Acceptance Rate", f"{accepted_rate:.1f}%")
+        else:
+            st.info("No session logs recorded yet. Run a check to start logging!")
+    except Exception as e:
+        st.error(f"Could not load session history: {e}")
 
 # --- Educational Footer ---
 st.markdown("---")

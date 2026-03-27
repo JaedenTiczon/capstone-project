@@ -16,7 +16,7 @@ class TradeInput:
     This avoids passing 6 different arguments to every function.
     """
     capital: float          # Total account balance (e.g., $10,000)
-    position_size: float    # Number of units/contracts (e.g., 1.5 BTC)
+    position_size: float    # Dollar amount invested (e.g., $100 USD)
     entry_price: float      # Price we buy/sell at
     stop_loss: float       # Price where we exit if wrong
     take_profit: float     # Price where we exit if right
@@ -48,7 +48,7 @@ class RiskAssessor:
     
     Our "Greedy Choice Property":
     - We evaluate rules in order of CRITICALITY (Priority).
-    - If a critical rule fails (e.g., Risk > 2%), we IMMEDIATELY reject the trade.
+    - If a critical rule fails, we IMMEDIATELY reject the trade.
     - We do NOT "backtrack" or check if the trade is otherwise amazing.
     - A single fatal flaw makes the entire trade invalid.
     
@@ -57,10 +57,9 @@ class RiskAssessor:
     """
     
     # --- Configuration Constants (The Rules) ---
-    MAX_RISK_PERCENT = 1.00      # Rule 1: Max 100% risk of total capital (1:1 Ratio)
-    MAX_DRAWDOWN_PERCENT = 0.05  # Rule 2: Max 5% drawdown (for this trade's impact)
+    MAX_EXPOSURE = 1.0           # Rule 1: Effective exposure must be < 1:1 with capital
+    MAX_LEVERAGE = 20.0          # Rule 2: Max 20x leverage
     MIN_RISK_REWARD = 1.5        # Rule 3: Must earn at least $1.50 for every $1 risked
-    MAX_LEVERAGE = 20.0          # Rule 4: Max 20x leverage
 
     def evaluate_trade(self, trade: TradeInput) -> AssessmentResult:
         """
@@ -71,7 +70,6 @@ class RiskAssessor:
         """
         
         # 1. Preliminary Calculations (The Math)
-        # We need to know the basic numbers before we can apply rules.
         is_long = trade.take_profit > trade.entry_price
         
         if is_long:
@@ -85,40 +83,33 @@ class RiskAssessor:
         if risk_per_unit <= 0:
             return AssessmentResult(False, "Error", "Invalid Stop Loss: It must be below entry for Longs, above for Shorts.", "Sanity Check")
 
-        # Total money at risk = (Risk per unit * Size)
-        # Note: In specialized trading (FX), this formula might be more complex, 
-        # but for this CS project, we stick to the standard linear formula.
-        total_risk_amount = risk_per_unit * trade.position_size
-        
-        # Risk as a percentage of account = (Total Risk / Capital)
-        risk_percent = total_risk_amount / trade.capital
+        # Effective Exposure = (Position Size * Leverage) / Capital
+        # This shows how much of your account is at risk after leverage amplification.
+        # Example: $100 position * 10x leverage = $1000 effective exposure on a $500 account = 2.0x (DANGEROUS)
+        effective_exposure = (trade.position_size * trade.leverage) / trade.capital
 
-        # Risk : Reward Ratio
+        # Risk : Reward Ratio (based on price levels, independent of position size)
         rr_ratio = reward_per_unit / risk_per_unit if risk_per_unit > 0 else 0
-
-        # Drawdown Impact (Simplified logic for linear assets)
-        potential_drawdown = risk_percent  # In this simplified model, risk % IS the potential drawdown impact
 
         # =========================================================
         # THE GREEDY EVALUATION LOOP
         # Priority Order: Safety (Survival) > Profitability (Growth)
         # =========================================================
 
-        # --- Rule 1: Capital Preservation (Most Critical) ---
-        # "Can this trade blow up my account?"
-        if risk_percent > self.MAX_RISK_PERCENT:
-            # GREEDY ACTION: Reject immediately. Do not pass Go.
+        # --- Rule 1: Position Exposure (Most Critical) ---
+        # "Is the effective position (after leverage) >= your entire account?"
+        # Higher leverage = higher exposure = more danger.
+        if effective_exposure >= self.MAX_EXPOSURE:
             return AssessmentResult(
                 is_safe=False,
                 risk_level="High",
-                message=f"Rule 1 Failed: Risk {risk_percent:.2%} exceeds max {self.MAX_RISK_PERCENT:.2%}.",
-                failed_rule="Maximum Risk %"
+                message=f"Rule 1 Failed: Effective exposure {effective_exposure:.2f}x is at or above 1:1 with capital.",
+                failed_rule="Position Exposure (1:1 Rule)"
             )
 
         # --- Rule 2: Leverage Constraints ---
         # "Is the leverage incredibly dangerous?"
         if trade.leverage > self.MAX_LEVERAGE:
-            # GREEDY ACTION: Reject.
             return AssessmentResult(
                 is_safe=False,
                 risk_level="High",
@@ -129,9 +120,6 @@ class RiskAssessor:
         # --- Rule 3: Risk/Reward Efficiency ---
         # "Is this trade worth the trouble?"
         if rr_ratio < self.MIN_RISK_REWARD:
-            # GREEDY ACTION: Reject. 
-            # Note: A trade can be "safe" (low risk) but "bad" (low reward). 
-            # Our algorithm rejects it anyway because it's suboptimal.
             return AssessmentResult(
                 is_safe=False,
                 risk_level="Medium",
@@ -139,11 +127,11 @@ class RiskAssessor:
                 failed_rule="Risk/Reward Ratio"
             )
 
-        #If we survived all the "Rejection Gates", the trade is Accepted.
+        # If we survived all the "Rejection Gates", the trade is Accepted.
         return AssessmentResult(
             is_safe=True,
             risk_level="Low",
-            message=f"APPROVED: Risk {risk_percent:.2%} | R:R {rr_ratio:.2f}",
+            message=f"APPROVED: Exposure {effective_exposure:.2f}x | R:R {rr_ratio:.2f}",
             failed_rule=None
         )
 
@@ -151,32 +139,54 @@ class RiskAssessor:
 # Self-Test Section
 # ==========================================
 if __name__ == "__main__":
-    # This block allows us to test the Logic without running the UI.
-    # It will run only if we execute "python risk_logic.py" directly.
-    
     print("Running Self-Test on risk_logic.py...")
     
-    # Test Case 1: Convert a Safe Trade
     assessor = RiskAssessor()
+    
+    # Test Case 1: Safe Trade ($100 on $10,000 account, 1x leverage)
     safe_input = TradeInput(
         capital=10000, 
-        position_size=1, 
+        position_size=100,     # $100 USD position
         entry_price=100, 
-        stop_loss=98,   # Risk $2 * 1 = $2 (0.02% risk) -> Very safe
-        take_profit=105, # Reward $5 -> R:R 2.5
+        stop_loss=98,
+        take_profit=105,
         leverage=1
     )
     result = assessor.evaluate_trade(safe_input)
-    print(f"Test 1 (Safe): {result.message} -> Passed? {result.is_safe}")
+    print(f"Test 1 (Safe):          {result.message} -> Passed? {result.is_safe}")
 
-    # Test Case 2: Dangerous Trade (Risk > 2%)
+    # Test Case 2: Dangerous Trade ($500 on $500 account = 1:1 ratio)
     danger_input = TradeInput(
-        capital=1000,      # Small account
-        position_size=10, 
-        entry_price=100, 
-        stop_loss=90,      # Risk $10 * 10 = $100 (10% risk!)
-        take_profit=200,   # Massive reward, but risk is too high
+        capital=500,
+        position_size=500,     # $500 USD = entire account
+        entry_price=71711.20, 
+        stop_loss=72866.10,
+        take_profit=67503.00,
         leverage=1
     )
     result2 = assessor.evaluate_trade(danger_input)
-    print(f"Test 2 (High Risk): {result2.message} -> Passed? {result2.is_safe}")
+    print(f"Test 2 (1:1 Exposure):  {result2.message} -> Passed? {result2.is_safe}")
+
+    # Test Case 3: Leverage makes it dangerous ($100 on $500 with 10x leverage = 2.0x exposure)
+    leveraged_input = TradeInput(
+        capital=500,
+        position_size=100,     # Only $100, but...
+        entry_price=71711.20,
+        stop_loss=72866.10,
+        take_profit=67503.00,
+        leverage=10             # 10x makes it $1000 effective = 2.0x exposure!
+    )
+    result3 = assessor.evaluate_trade(leveraged_input)
+    print(f"Test 3 (Leverage Risk): {result3.message} -> Passed? {result3.is_safe}")
+
+    # Test Case 4: Leverage keeps it safe ($100 on $500 with 2x leverage = 0.4x exposure)
+    safe_lev_input = TradeInput(
+        capital=500,
+        position_size=100,     # $100 with 2x = $200 effective
+        entry_price=71711.20,
+        stop_loss=72866.10,
+        take_profit=67503.00,
+        leverage=2
+    )
+    result4 = assessor.evaluate_trade(safe_lev_input)
+    print(f"Test 4 (Lev Safe):      {result4.message} -> Passed? {result4.is_safe}")

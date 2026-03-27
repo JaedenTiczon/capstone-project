@@ -1,0 +1,9 @@
+# Secrets
+.streamlit/secrets.toml
+
+# Logs
+session_logs.csv
+
+# Python
+__pycache__/
+*.pyc
